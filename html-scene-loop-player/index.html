@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebM Loop Player</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0c10;
+      --panel: rgba(10, 12, 16, 0.84);
+      --border: #252a35;
+      --text: #c8d0dc;
+      --muted: #6b7585;
+      --accent: #5b9cf5;
+      --ok: #4ade80;
+    }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; color: var(--text); font: 13px/1.5 "SF Pro Text", "Helvetica Neue", sans-serif; }
+    .app { position: relative; width: 100%; height: 100%; }
+    video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+    .landing {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px; background: var(--bg); color: var(--muted); text-align: center; padding: 24px;
+    }
+    .landing.hidden { display: none; }
+    .landing h1 { color: var(--text); font-size: 20px; font-weight: 600; }
+    .landing p { max-width: 420px; line-height: 1.6; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border); background: #1a1f28; color: var(--text);
+      padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 13px;
+    }
+    .btn:hover { border-color: #3a4250; }
+    .btn.primary { border-color: var(--accent); background: rgba(91,156,245,0.12); }
+    .btn.on { border-color: var(--ok); background: rgba(74,222,128,0.12); color: #bbf7d0; }
+    .hud {
+      position: fixed; z-index: 10; display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+    }
+    .app.playing .hud { display: flex; }
+    .hud-top { top: 16px; left: 16px; right: 16px; justify-content: space-between; }
+    .hud-bottom { bottom: 20px; left: 50%; transform: translateX(-50%); }
+    .title { font-size: 12px; color: var(--muted); }
+    .title strong { color: var(--text); }
+    .hint { position: fixed; bottom: 16px; left: 16px; color: var(--muted); font-size: 11px; z-index: 10; display: none; }
+    .app.playing .hint { display: block; }
+    .hint kbd {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      border: 1px solid var(--border); background: #0d1016; font-size: 10px;
+    }
+    input[type=file] { display: none; }
+    .toast {
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 20;
+      padding: 10px 16px; border-radius: 8px; background: #1a2330; border: 1px solid var(--ok);
+      opacity: 0; transition: opacity 0.2s; pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <video id="player" playsinline></video>
+
+    <div id="landing" class="landing">
+      <h1>WebM Loop Player</h1>
+      <p>Play recordings from <strong>html-scene-recorder</strong> on loop, fullscreen.<br>Choose a <code>.webm</code> file from your Downloads folder.</p>
+      <label class="btn primary" for="fileInput">Choose .webm file</label>
+      <span>or drag &amp; drop here</span>
+    </div>
+
+    <div class="hud hud-top">
+      <div class="title">Now playing: <strong id="fileName">—</strong></div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="changeBtn" class="btn">Change file</button>
+      </div>
+    </div>
+
+    <div class="hud hud-bottom">
+      <button id="loopBtn" class="btn on">Loop: ON</button>
+      <button id="playBtn" class="btn primary">Pause</button>
+    </div>
+
+    <p class="hint"><kbd>Space</kbd> play/pause · <kbd>L</kbd> loop · <kbd>O</kbd> open file</p>
+  </div>
+
+  <input id="fileInput" type="file" accept=".webm,video/webm" />
+  <div id="toast" class="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var state = {
+    loop: localStorage.getItem('loop-player-loop') !== '0',
+    url: null,
+    fileName: ''
+  };
+
+  var els = {
+    app: document.getElementById('app'),
+    player: document.getElementById('player'),
+    landing: document.getElementById('landing'),
+    fileInput: document.getElementById('fileInput'),
+    fileName: document.getElementById('fileName'),
+    loopBtn: document.getElementById('loopBtn'),
+    playBtn: document.getElementById('playBtn'),
+    changeBtn: document.getElementById('changeBtn'),
+    toast: document.getElementById('toast')
+  };
+
+  function toast(msg) {
+    els.toast.textContent = msg;
+    els.toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { els.toast.classList.remove('show'); }, 2500);
+  }
+
+  function updateLoopUI() {
+    els.player.loop = state.loop;
+    els.loopBtn.textContent = state.loop ? 'Loop: ON' : 'Loop: OFF';
+    els.loopBtn.classList.toggle('on', state.loop);
+    localStorage.setItem('loop-player-loop', state.loop ? '1' : '0');
+  }
+
+  function updatePlayUI() {
+    var playing = !els.player.paused;
+    els.playBtn.textContent = playing ? 'Pause' : 'Play';
+  }
+
+  function loadFile(file) {
+    if (!file) return;
+    if (!/\.webm$/i.test(file.name) && file.type !== 'video/webm') {
+      toast('Please choose a .webm file');
+      return;
+    }
+    if (state.url) URL.revokeObjectURL(state.url);
+    state.url = URL.createObjectURL(file);
+    state.fileName = file.name;
+    els.player.src = state.url;
+    els.fileName.textContent = file.name;
+    els.landing.classList.add('hidden');
+    els.app.classList.add('playing');
+    updateLoopUI();
+    els.player.load();
+    els.player.play().catch(function () {});
+    updatePlayUI();
+    toast('Loop playback started');
+  }
+
+  function toggleLoop() {
+    state.loop = !state.loop;
+    updateLoopUI();
+    toast(state.loop ? 'Loop ON' : 'Loop OFF');
+  }
+
+  function togglePlay() {
+    if (!els.player.src) return;
+    if (els.player.paused) els.player.play();
+    else els.player.pause();
+  }
+
+  els.fileInput.addEventListener('change', function (e) {
+    if (e.target.files[0]) loadFile(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  els.changeBtn.addEventListener('click', function () { els.fileInput.click(); });
+  els.loopBtn.addEventListener('click', toggleLoop);
+  els.playBtn.addEventListener('click', togglePlay);
+  els.player.addEventListener('play', updatePlayUI);
+  els.player.addEventListener('pause', updatePlayUI);
+
+  document.addEventListener('dragover', function (e) { e.preventDefault(); });
+  document.addEventListener('drop', function (e) {
+    e.preventDefault();
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.target.matches('input, textarea')) return;
+    if (e.code === 'Space') {
+      e.preventDefault();
+      togglePlay();
+    }
+    if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault();
+      toggleLoop();
+    }
+    if (e.key === 'o' || e.key === 'O') {
+      e.preventDefault();
+      els.fileInput.click();
+    }
+  });
+
+  updateLoopUI();
+})();
+</script>
+</body>
+</html>

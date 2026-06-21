@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HTML Scene Recorder (.webm)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0c10;
+      --panel: #12151c;
+      --border: #252a35;
+      --text: #c8d0dc;
+      --muted: #6b7585;
+      --accent: #5b9cf5;
+      --rec: #e84545;
+      --ok: #4ade80;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 "SF Pro Text", "Helvetica Neue", sans-serif; overflow: hidden; }
+    .app { height: 100%; position: relative; }
+    .app.capture-mode .chrome { display: none; }
+    .app.capture-mode .stage { position: fixed; inset: 0; z-index: 1; }
+    .app.replay-mode .chrome { display: none; }
+    .app.replay-mode .stage { position: fixed; inset: 0; z-index: 1; }
+    .app.library-mode .chrome {
+      display: grid !important; position: fixed; inset: 0; z-index: 30;
+      background: var(--bg);
+    }
+    .app.library-mode .hud { display: none !important; }
+
+    .chrome { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+    header {
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+      padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    header h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.02em; }
+    header p { color: var(--muted); font-size: 12px; }
+    .tabs { display: flex; gap: 4px; margin-left: auto; }
+    .tab {
+      border: 1px solid var(--border); background: transparent; color: var(--muted);
+      padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    }
+    .tab.active { color: var(--text); border-color: var(--accent); background: rgba(91,156,245,0.08); }
+    main { display: grid; grid-template-columns: 280px 1fr; min-height: 0; height: 100%; }
+    .sidebar {
+      border-right: 1px solid var(--border); background: var(--panel);
+      padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 14px;
+    }
+    .panel-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 8px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border: 1px solid var(--border); background: #1a1f28; color: var(--text);
+      padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; width: 100%;
+    }
+    .btn:hover { border-color: #3a4250; }
+    .btn.primary { border-color: var(--accent); background: rgba(91,156,245,0.12); }
+    .btn.danger { border-color: var(--rec); color: #ffb4b4; }
+    .hint { font-size: 11px; color: var(--muted); line-height: 1.55; }
+    .hint kbd {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      border: 1px solid var(--border); background: #0d1016; font-family: inherit; font-size: 10px;
+    }
+    .steps { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+    .steps li {
+      display: flex; gap: 10px; align-items: flex-start; font-size: 12px; line-height: 1.45;
+    }
+    .steps .num {
+      flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 600; background: #1a1f28; border: 1px solid var(--border); color: var(--muted);
+    }
+    .steps li.done .num { background: rgba(74,222,128,0.15); border-color: var(--ok); color: var(--ok); }
+    .steps li.active .num { background: rgba(91,156,245,0.15); border-color: var(--accent); color: var(--accent); }
+    .steps li.disabled { opacity: 0.45; }
+    .record-btn { margin-top: 10px; font-size: 13px; padding: 10px 12px; }
+    .record-btn.recording { border-color: var(--rec); background: rgba(232,69,69,0.12); color: #ffb4b4; }
+    .toast {
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+      padding: 10px 16px; border-radius: 8px; background: #1a2330; border: 1px solid var(--ok);
+      color: var(--text); font-size: 12px; z-index: 9999; pointer-events: none; opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .toast.show { opacity: 1; }
+    .status {
+      padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: #0d1016; font-size: 11px;
+    }
+    .status.recording { border-color: var(--rec); box-shadow: inset 0 0 0 1px rgba(232,69,69,0.15); }
+    .status .dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px;
+    }
+    .status.recording .dot { background: var(--rec); animation: pulse 1s infinite; }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    .record-list { display: flex; flex-direction: column; gap: 6px; }
+    .record-item {
+      text-align: left; border: 1px solid var(--border); background: #0d1016; border-radius: 8px;
+      padding: 8px 10px; cursor: pointer; color: var(--text); font-size: 11px;
+    }
+    .record-item:hover { border-color: #3a4250; }
+    .record-item.active { border-color: var(--accent); }
+    .record-item .meta { color: var(--muted); margin-top: 2px; }
+    .stage { position: absolute; inset: 0; background: #000; }
+    #captureView, #replayView { position: absolute; inset: 0; }
+    .stage iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+    .dropzone {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px; color: var(--muted); background: var(--bg);
+    }
+    .dropzone.hidden { display: none; }
+    .dropzone strong { color: var(--text); font-size: 18px; font-weight: 500; }
+    .dropzone .btn { width: auto; min-width: 220px; }
+
+    .hud {
+      position: fixed; z-index: 20; display: none; align-items: center; gap: 10px;
+      padding: 10px 14px; border-radius: 12px;
+      background: rgba(10, 12, 16, 0.82); border: 1px solid var(--border);
+      backdrop-filter: blur(10px); box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    }
+    .app.capture-mode .hud-capture,
+    .app.replay-mode .hud-replay { display: flex; }
+    .hud-top { top: 16px; left: 16px; right: 16px; justify-content: space-between; flex-wrap: wrap; }
+    .hud-bottom { bottom: 20px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); }
+    .hud-title { font-size: 12px; color: var(--muted); }
+    .hud-title strong { color: var(--text); font-weight: 600; }
+    .hud-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .hud .btn { width: auto; white-space: nowrap; }
+    .hud .btn.active-toggle { border-color: var(--ok); background: rgba(74,222,128,0.12); color: #bbf7d0; }
+    .hud .status { border: none; background: transparent; padding: 0; font-size: 12px; }
+    .hud .status.recording { box-shadow: none; color: #ffb4b4; }
+    .rec-badge {
+      display: none; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+      background: rgba(232,69,69,0.15); border: 1px solid var(--rec); color: #ffb4b4; font-size: 12px;
+    }
+    .app.capture-mode.recording .rec-badge { display: inline-flex; }
+    .rec-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); animation: pulse 1s infinite; }
+
+    #replayVideo { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+    footer {
+      padding: 8px 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px;
+      display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .hidden { display: none !important; }
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <div class="stage">
+      <div id="captureView">
+        <iframe id="preview" title="HTML preview" class="hidden"></iframe>
+        <div id="dropzone" class="dropzone">
+          <strong>HTML Scene Recorder</strong>
+          <span>Load a WebGL HTML file to open it fullscreen for recording</span>
+          <label class="btn primary" for="fileInput">Choose HTML file</label>
+        </div>
+      </div>
+
+      <div id="replayView" class="hidden">
+        <video id="replayVideo" controls playsinline></video>
+        <p id="replayEmpty" class="hint hidden" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;">No recording selected</p>
+      </div>
+    </div>
+
+    <div class="hud hud-capture hud-top">
+      <div class="hud-title">Recording: <strong id="hudFileName">—</strong></div>
+      <div class="hud-actions">
+        <span class="rec-badge"><span class="dot"></span> REC</span>
+        <div id="hudStatusBox" class="status"><span id="hudStatusText">Ready</span></div>
+        <button id="hudChangeFile" class="btn">Change file</button>
+        <button id="hudLibrary" class="btn">Library</button>
+      </div>
+    </div>
+
+    <div class="hud hud-capture hud-bottom">
+      <button id="hudRecordBtn" class="btn primary" disabled>Start Recording (R)</button>
+    </div>
+
+    <div class="hud hud-replay hud-top">
+      <div class="hud-title">Replay</div>
+      <div class="hud-actions">
+        <button id="hudBackCapture" class="btn">Back to capture</button>
+        <button id="hudExport" class="btn" disabled>Download .webm</button>
+        <button id="hudLibrary2" class="btn">Library</button>
+      </div>
+    </div>
+
+    <div class="chrome" id="chrome">
+    <header>
+      <div>
+        <h1>HTML Scene Recorder</h1>
+        <p>Library &amp; settings — loaded HTML opens fullscreen for recording.</p>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-view="capture">Capture</button>
+        <button class="tab" data-view="replay">Replay</button>
+      </div>
+    </header>
+
+    <main>
+      <aside class="sidebar">
+        <section>
+          <div class="panel-title">How to use</div>
+          <ol class="steps" id="steps">
+            <li id="step1" class="active"><span class="num">1</span><span>Click <strong>Choose HTML file</strong> — it opens <strong>fullscreen</strong>.</span></li>
+            <li id="step2" class="disabled"><span class="num">2</span><span>Wait for the animation to appear.</span></li>
+            <li id="step3" class="disabled"><span class="num">3</span><span>Press <kbd>R</kbd> to record. Press <kbd>R</kbd> again to stop — <strong>.webm</strong> downloads.</span></li>
+          </ol>
+          <label class="btn primary" for="fileInput2" style="margin-top:10px">Choose HTML file</label>
+          <input id="fileInput2" type="file" accept=".html,.htm,text/html" />
+        </section>
+
+        <section>
+          <div class="panel-title">Recording</div>
+          <div id="statusBox" class="status">
+            <span class="dot"></span><span id="statusText">Step 1: choose an HTML file</span>
+          </div>
+          <button id="recordBtn" class="btn record-btn primary" disabled>Start Recording</button>
+          <p class="hint" style="margin-top:8px"><kbd>R</kbd> works while the fullscreen preview is focused.</p>
+          <button id="exportBtn" class="btn" style="margin-top:8px" disabled>Download again (.webm)</button>
+          <button id="deleteBtn" class="btn danger" style="margin-top:6px" disabled>Delete selected</button>
+        </section>
+
+        <section style="flex:1; min-height:0; display:flex; flex-direction:column;">
+          <div class="panel-title">Saved recordings</div>
+          <div id="recordList" class="record-list"></div>
+        </section>
+      </aside>
+
+      <div style="background:#050608; display:flex; align-items:center; justify-content:center; color:var(--muted); padding:24px; text-align:center;">
+        <p>Loaded scenes appear fullscreen behind this panel.<br>Close Library to return to capture.</p>
+      </div>
+    </main>
+
+    <footer>
+      <span>Fullscreen capture · auto-download .webm on stop</span>
+      <span id="footerStats">0 recordings</span>
+    </footer>
+    </div>
+  </div>
+  <input id="fileInput" type="file" accept=".html,.htm,text/html" />
+  <div id="toast" class="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var DB_NAME = 'html-scene-recorder';
+  var DB_VER = 2;
+  var STORE = 'recordings';
+  var TARGET_FPS = 30;
+  var MAX_DURATION_MS = 60000; // 60 seconds max
+
+  var INJECT = [
+    '<script>',
+    '(function(){',
+    '  var orig = HTMLCanvasElement.prototype.getContext;',
+    '  HTMLCanvasElement.prototype.getContext = function(type, attrs) {',
+    '    attrs = attrs || {};',
+    '    if (type === "webgl" || type === "webgl2" || type === "experimental-webgl") {',
+    '      attrs.preserveDrawingBuffer = true;',
+    '    }',
+    '    return orig.call(this, type, attrs);',
+    '  };',
+    '  var style = document.createElement("style");',
+    '  style.textContent = "html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#000}";',
+    '  document.documentElement.appendChild(style);',
+    '  function fitCanvas(){',
+    '    var list = document.querySelectorAll("canvas");',
+    '    if (!list.length) return;',
+    '    var c = list[list.length - 1];',
+    '    var dpr = window.devicePixelRatio || 1;',
+    '    var w = Math.max(1, Math.floor(window.innerWidth * dpr));',
+    '    var h = Math.max(1, Math.floor(window.innerHeight * dpr));',
+    '    if (c.width !== w || c.height !== h) {',
+    '      c.width = w; c.height = h;',
+    '      c.style.width = "100%"; c.style.height = "100%"; c.style.display = "block";',
+    '      window.dispatchEvent(new Event("resize"));',
+    '    }',
+    '  }',
+    '  window.addEventListener("resize", fitCanvas);',
+    '  setTimeout(fitCanvas, 100);',
+    '  setTimeout(fitCanvas, 500);',
+    '  setTimeout(fitCanvas, 1500);',
+    '  setInterval(fitCanvas, 1000);',
+    '  window.addEventListener("keydown", function(e) {',
+    '    if (e.key === "r" || e.key === "R") {',
+    '      e.preventDefault();',
+    '      window.parent.postMessage({ type: "hsr-toggle-record" }, "*");',
+    '    }',
+    '  }, true);',
+    '})();',
+    '<\/script>'
+  ].join('');
+
+  var state = {
+    recording: false,
+    canvasReady: false,
+    canvasWaitTimer: null,
+    recordTimer: null,
+    fileName: '',
+    width: 0,
+    height: 0,
+    selectedId: null,
+    recordings: [],
+    replayUrl: null,
+    currentView: 'capture',
+    mediaRecorder: null,
+    mediaStream: null,
+    chunks: [],
+    recordStartedAt: 0
+  };
+
+  var els = {
+    app: document.getElementById('app'),
+    chrome: document.getElementById('chrome'),
+    fileInput: document.getElementById('fileInput'),
+    fileInput2: document.getElementById('fileInput2'),
+    preview: document.getElementById('preview'),
+    dropzone: document.getElementById('dropzone'),
+    statusBox: document.getElementById('statusBox'),
+    statusText: document.getElementById('statusText'),
+    recordBtn: document.getElementById('recordBtn'),
+    hudRecordBtn: document.getElementById('hudRecordBtn'),
+    hudStatusBox: document.getElementById('hudStatusBox'),
+    hudStatusText: document.getElementById('hudStatusText'),
+    hudFileName: document.getElementById('hudFileName'),
+    hudChangeFile: document.getElementById('hudChangeFile'),
+    hudLibrary: document.getElementById('hudLibrary'),
+    hudLibrary2: document.getElementById('hudLibrary2'),
+    hudBackCapture: document.getElementById('hudBackCapture'),
+    hudExport: document.getElementById('hudExport'),
+    recordList: document.getElementById('recordList'),
+    exportBtn: document.getElementById('exportBtn'),
+    deleteBtn: document.getElementById('deleteBtn'),
+    captureView: document.getElementById('captureView'),
+    replayView: document.getElementById('replayView'),
+    replayVideo: document.getElementById('replayVideo'),
+    replayEmpty: document.getElementById('replayEmpty'),
+    footerStats: document.getElementById('footerStats'),
+    tabs: document.querySelectorAll('.tab'),
+    step1: document.getElementById('step1'),
+    step2: document.getElementById('step2'),
+    step3: document.getElementById('step3'),
+    toast: document.getElementById('toast')
+  };
+
+  function openDB() {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains(STORE)) {
+          db.createObjectStore(STORE, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+
+  function listRecordings() {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, 'readonly');
+        var store = tx.objectStore(STORE);
+        var req = store.getAll();
+        req.onsuccess = function () {
+          var items = (req.result || []).sort(function (a, b) { return b.created - a.created; });
+          resolve(items);
+        };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  function saveRecording(rec) {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(rec);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+
+  function deleteRecording(id) {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).delete(id);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+
+  function setStatus(text, recording) {
+    els.statusText.textContent = text;
+    els.hudStatusText.textContent = text;
+    els.statusBox.classList.toggle('recording', !!recording);
+    els.hudStatusBox.classList.toggle('recording', !!recording);
+    els.recordBtn.classList.toggle('recording', !!recording);
+    els.hudRecordBtn.classList.toggle('recording', !!recording);
+    els.app.classList.toggle('recording', !!recording);
+    els.recordBtn.textContent = recording ? 'Stop Recording (R)' : 'Start Recording (R)';
+    els.hudRecordBtn.textContent = recording ? 'Stop Recording (R)' : 'Start Recording (R)';
+  }
+
+  function setAppMode(mode) {
+    els.app.classList.remove('capture-mode', 'replay-mode', 'library-mode');
+    if (mode === 'capture') els.app.classList.add('capture-mode');
+    if (mode === 'replay') els.app.classList.add('replay-mode');
+    if (mode === 'library') els.app.classList.add('library-mode');
+  }
+
+  function openLibrary() {
+    setAppMode('library');
+  }
+
+  function closeLibrary() {
+    if (state.currentView === 'replay') setAppMode('replay');
+    else if (state.fileName) setAppMode('capture');
+    else setAppMode('');
+  }
+
+  function showToast(msg) {
+    els.toast.textContent = msg;
+    els.toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { els.toast.classList.remove('show'); }, 4000);
+  }
+
+  function updateSteps() {
+    els.step1.className = state.fileName ? 'done' : 'active';
+    els.step2.className = state.canvasReady ? 'done' : (state.fileName ? 'active' : 'disabled');
+    els.step3.className = state.canvasReady ? 'active' : 'disabled';
+    els.recordBtn.disabled = !state.canvasReady || (state.recording ? false : !state.canvasReady);
+    els.hudRecordBtn.disabled = els.recordBtn.disabled;
+  }
+
+  function stopCanvasWait() {
+    if (state.canvasWaitTimer) clearInterval(state.canvasWaitTimer);
+    state.canvasWaitTimer = null;
+  }
+
+  function waitForCanvas() {
+    stopCanvasWait();
+    state.canvasReady = false;
+    updateSteps();
+    setStatus('Step 2: waiting for canvas to appear…', false);
+
+    var attempts = 0;
+    state.canvasWaitTimer = setInterval(function () {
+      attempts++;
+      var doc = els.preview.contentDocument;
+      var canvas = doc && findMainCanvas(doc);
+      if (canvas && canvas.width > 0 && canvas.height > 0) {
+        stopCanvasWait();
+        state.canvasReady = true;
+        updateSteps();
+        setStatus('Ready — press R or click Start Recording', false);
+        return;
+      }
+      if (attempts >= 120) {
+        stopCanvasWait();
+        setStatus('No canvas found. Use a WebGL/canvas HTML file (needs internet if it loads Three.js from CDN).', false);
+      } else if (attempts % 4 === 0) {
+        setStatus('Step 2: still loading… (' + Math.round(attempts / 2) + 's)', false);
+      }
+    }, 500);
+  }
+
+  function pickMimeType() {
+    var types = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    for (var i = 0; i < types.length; i++) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(types[i])) return types[i];
+    }
+    return 'video/webm';
+  }
+
+  function formatDuration(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  function downloadBlob(blob, filename) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    showToast('Downloaded: ' + filename);
+  }
+
+  function downloadRecording(rec) {
+    var name = (rec.sourceFile || 'recording').replace(/\.html?$/i, '') + '-recording.webm';
+    if (rec.blob instanceof Blob) {
+      downloadBlob(rec.blob, name);
+      return;
+    }
+    showToast('Recording file missing — record again');
+  }
+
+  function injectAndLoad(html, name) {
+    stopCanvasWait();
+    state.canvasReady = false;
+    state.fileName = name;
+    updateSteps();
+
+    var blob = new Blob([INJECT + html], { type: 'text/html' });
+    var url = URL.createObjectURL(blob);
+    els.preview.onload = function () {
+      els.dropzone.classList.add('hidden');
+      els.preview.classList.remove('hidden');
+      els.hudFileName.textContent = name;
+      setAppMode('capture');
+      closeLibrary();
+      switchView('capture');
+      waitForCanvas();
+    };
+    els.preview.src = url;
+  }
+
+  function loadFile(file) {
+    if (!file || !/\.html?$/i.test(file.name)) return;
+    var reader = new FileReader();
+    reader.onload = function () { injectAndLoad(reader.result, file.name); };
+    reader.readAsText(file);
+  }
+
+  function findMainCanvas(doc) {
+    var canvases = doc.querySelectorAll('canvas');
+    if (!canvases.length) return null;
+    var best = canvases[0];
+    var bestArea = 0;
+    for (var i = 0; i < canvases.length; i++) {
+      var c = canvases[i];
+      var area = c.width * c.height;
+      if (area > bestArea) { bestArea = area; best = c; }
+    }
+    return best;
+  }
+
+  function getTargetCanvas() {
+    var doc = els.preview.contentDocument;
+    return doc ? findMainCanvas(doc) : null;
+  }
+
+  function stopRecordTimer() {
+    if (state.recordTimer) clearInterval(state.recordTimer);
+    state.recordTimer = null;
+  }
+
+  function cleanupMedia() {
+    stopRecordTimer();
+    if (state.mediaStream) {
+      state.mediaStream.getTracks().forEach(function (t) { t.stop(); });
+    }
+    state.mediaRecorder = null;
+    state.mediaStream = null;
+    state.chunks = [];
+  }
+
+  function startWebmRecording() {
+    if (!window.MediaRecorder) throw new Error('MediaRecorder not supported in this browser');
+
+    var canvas = getTargetCanvas();
+    if (!canvas) throw new Error('Canvas not found');
+
+    state.width = canvas.width;
+    state.height = canvas.height;
+    state.chunks = [];
+    state.recordStartedAt = Date.now();
+
+    state.mediaStream = canvas.captureStream(TARGET_FPS);
+    var mimeType = pickMimeType();
+    state.mediaRecorder = new MediaRecorder(state.mediaStream, {
+      mimeType: mimeType,
+      videoBitsPerSecond: 8000000
+    });
+
+    state.mediaRecorder.ondataavailable = function (e) {
+      if (e.data && e.data.size > 0) state.chunks.push(e.data);
+    };
+
+    state.mediaRecorder.start(200);
+
+    stopRecordTimer();
+    state.recordTimer = setInterval(function () {
+      var elapsed = Date.now() - state.recordStartedAt;
+      setStatus('Recording… ' + formatDuration(elapsed) + ' — press R again to stop & save .webm', true);
+      if (elapsed >= MAX_DURATION_MS) toggleRecording();
+    }, 250);
+  }
+
+  function stopWebmRecording() {
+    return new Promise(function (resolve, reject) {
+      if (!state.mediaRecorder) {
+        reject(new Error('Not recording'));
+        return;
+      }
+
+      state.mediaRecorder.onstop = function () {
+        var mimeType = state.mediaRecorder.mimeType || 'video/webm';
+        var blob = new Blob(state.chunks, { type: mimeType });
+        cleanupMedia();
+        if (!blob.size) {
+          reject(new Error('Empty recording'));
+          return;
+        }
+        resolve(blob);
+      };
+
+      state.mediaRecorder.onerror = function () {
+        cleanupMedia();
+        reject(new Error('Recording failed'));
+      };
+
+      try {
+        state.mediaRecorder.stop();
+      } catch (e) {
+        cleanupMedia();
+        reject(e);
+      }
+    });
+  }
+
+  function toggleRecording() {
+    if (!els.preview.src || !state.fileName) {
+      setStatus('Step 1: choose an HTML file first', false);
+      showToast('Load an HTML file before recording');
+      return;
+    }
+    if (!state.canvasReady && !state.recording) {
+      setStatus('Wait until the canvas appears in the preview', false);
+      showToast('Canvas not ready yet — wait a few seconds');
+      return;
+    }
+
+    if (!state.recording) {
+      try {
+        startWebmRecording();
+        state.recording = true;
+        setStatus('Recording… 0:00 — press R again to stop & save .webm', true);
+      } catch (e) {
+        setStatus('Could not start recording: ' + e.message, false);
+        showToast(e.message);
+        cleanupMedia();
+        state.recording = false;
+      }
+    } else {
+      state.recording = false;
+      setStatus('Saving .webm…', false);
+      stopWebmRecording().then(function (blob) {
+        var durationMs = Date.now() - state.recordStartedAt;
+        var rec = {
+          id: 'rec_' + Date.now(),
+          name: state.fileName.replace(/\.html?$/i, '') + ' @ ' + new Date().toLocaleTimeString(),
+          sourceFile: state.fileName,
+          created: Date.now(),
+          width: state.width,
+          height: state.height,
+          durationMs: durationMs,
+          mimeType: blob.type || 'video/webm',
+          blob: blob
+        };
+        return saveRecording(rec).then(function () {
+          downloadRecording(rec);
+          setStatus('Saved ' + formatDuration(durationMs) + ' — check Downloads folder', false);
+          refreshList(rec.id);
+          switchView('replay');
+        });
+      }).catch(function (err) {
+        setStatus('Recording failed: ' + err.message, false);
+        showToast(err.message);
+      });
+    }
+    updateSteps();
+  }
+
+  function renderList() {
+    els.recordList.innerHTML = '';
+    if (!state.recordings.length) {
+      els.recordList.innerHTML = '<p class="hint">No recordings yet.</p>';
+      els.exportBtn.disabled = true;
+      els.deleteBtn.disabled = true;
+      els.footerStats.textContent = '0 recordings';
+      return;
+    }
+    els.footerStats.textContent = state.recordings.length + ' recording(s)';
+    state.recordings.forEach(function (rec) {
+      var btn = document.createElement('button');
+      btn.className = 'record-item' + (rec.id === state.selectedId ? ' active' : '');
+      btn.innerHTML = '<div>' + rec.name + '</div><div class="meta">' +
+        formatDuration(rec.durationMs || 0) + ' · ' + rec.width + '×' + rec.height + ' · webm</div>';
+      btn.onclick = function () { selectRecording(rec.id); };
+      els.recordList.appendChild(btn);
+    });
+    els.exportBtn.disabled = !state.selectedId;
+    els.deleteBtn.disabled = !state.selectedId;
+    els.hudExport.disabled = !state.selectedId;
+  }
+
+  function refreshList(selectId) {
+    listRecordings().then(function (items) {
+      state.recordings = items;
+      if (selectId) state.selectedId = selectId;
+      else if (state.selectedId && !items.some(function (r) { return r.id === state.selectedId; })) {
+        state.selectedId = items[0] ? items[0].id : null;
+      }
+      renderList();
+      if (state.selectedId) loadReplay(state.selectedId);
+    });
+  }
+
+  function selectRecording(id) {
+    state.selectedId = id;
+    renderList();
+    loadReplay(id);
+    closeLibrary();
+    switchView('replay');
+  }
+
+  function loadReplay(id) {
+    var rec = state.recordings.find(function (r) { return r.id === id; });
+    if (!rec || !(rec.blob instanceof Blob)) {
+      els.replayEmpty.classList.remove('hidden');
+      els.replayVideo.removeAttribute('src');
+      els.replayVideo.classList.add('hidden');
+      return;
+    }
+    if (state.replayUrl) URL.revokeObjectURL(state.replayUrl);
+    state.replayUrl = URL.createObjectURL(rec.blob);
+    els.replayVideo.src = state.replayUrl;
+    els.replayVideo.classList.remove('hidden');
+    els.replayEmpty.classList.add('hidden');
+    els.replayVideo.load();
+  }
+
+  function switchView(view) {
+    state.currentView = view;
+    els.tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.view === view); });
+    els.captureView.classList.toggle('hidden', view !== 'capture');
+    els.replayView.classList.toggle('hidden', view !== 'replay');
+    if (view === 'capture' && state.fileName) setAppMode('capture');
+    else if (view === 'replay') setAppMode('replay');
+  }
+
+  // Events
+  function onFileChosen(e) {
+    if (e.target.files[0]) loadFile(e.target.files[0]);
+    e.target.value = '';
+  }
+
+  els.fileInput.addEventListener('change', onFileChosen);
+  els.fileInput2.addEventListener('change', onFileChosen);
+
+  document.addEventListener('dragover', function (e) { e.preventDefault(); });
+  document.addEventListener('drop', function (e) {
+    e.preventDefault();
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.target.matches('input, textarea')) return;
+    if (e.key === 'r' || e.key === 'R') {
+      e.preventDefault();
+      toggleRecording();
+    }
+    if (e.key === 'Escape' && els.app.classList.contains('library-mode')) {
+      closeLibrary();
+    }
+  });
+
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.type === 'hsr-toggle-record') toggleRecording();
+  });
+
+  els.recordBtn.addEventListener('click', toggleRecording);
+  els.hudRecordBtn.addEventListener('click', toggleRecording);
+  els.hudChangeFile.addEventListener('click', function () { els.fileInput.click(); });
+  els.hudLibrary.addEventListener('click', openLibrary);
+  els.hudLibrary2.addEventListener('click', openLibrary);
+  els.hudBackCapture.addEventListener('click', function () {
+    closeLibrary();
+    switchView('capture');
+  });
+  els.hudExport.addEventListener('click', function () {
+    var rec = state.recordings.find(function (r) { return r.id === state.selectedId; });
+    if (rec) downloadRecording(rec);
+  });
+
+  els.tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      closeLibrary();
+      switchView(tab.dataset.view);
+    });
+  });
+
+  els.exportBtn.addEventListener('click', function () {
+    var rec = state.recordings.find(function (r) { return r.id === state.selectedId; });
+    if (!rec) return;
+    downloadRecording(rec);
+  });
+
+  els.deleteBtn.addEventListener('click', function () {
+    if (!state.selectedId) return;
+    deleteRecording(state.selectedId).then(function () {
+      state.selectedId = null;
+      refreshList();
+      setStatus('Recording deleted', false);
+    });
+  });
+
+  refreshList();
+})();
+</script>
+</body>
+</html>
